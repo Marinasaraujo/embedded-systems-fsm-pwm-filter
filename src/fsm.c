@@ -18,6 +18,7 @@ static bool ot_fault_sim = false;
 static bool comm_err_sim = false;
 static unsigned int recovery_counter = 0U;
 
+
 // Protótipos das Funções Handler de Estado (Internas)
 static void state_init_handler(void);
 static void state_standby_handler(void);
@@ -39,6 +40,19 @@ static bool check_recovery_complete(void);
 
 
 // --- Implementações das Funções Públicas do Módulo FSM ---
+
+// Init dos gpios
+void initLEDSGPIOS(void)
+{
+    GPIO_setPadConfig(LEDB_GPIO_PIN, GPIO_PIN_TYPE_STD);
+    GPIO_setDirectionMode(LEDB_GPIO_PIN, GPIO_DIR_MODE_OUT);
+    GPIO_writePin(LEDB_GPIO_PIN, 1); // LED inicia desligado (ativo baixo)
+
+    GPIO_setPadConfig(LEDG_GPIO_PIN, GPIO_PIN_TYPE_STD);
+    GPIO_setDirectionMode(LEDG_GPIO_PIN, GPIO_DIR_MODE_OUT);
+    GPIO_writePin(LEDG_GPIO_PIN, 1); // LED inicia desligado (ativo baixo)
+}
+
 
 void FSM_Init(void)
 {
@@ -105,6 +119,10 @@ void FSM_RunCycle(void)
 
 void state_init_handler(void)
 {
+    // Ambos apagados
+    GPIO_writePin(LEDB_GPIO_PIN, 1);
+    GPIO_writePin(LEDG_GPIO_PIN, 1);
+    
     if (check_startup_complete())
     {
         g_converterState = CONVERTER_STATE_STANDBY;
@@ -113,15 +131,23 @@ void state_init_handler(void)
 
 void state_standby_handler(void)
 {
+    // Ambos apagados
+    GPIO_writePin(LEDB_GPIO_PIN, 1);
+    GPIO_writePin(LEDG_GPIO_PIN, 1);
+    
     if (check_enable_command())
     {
         g_converterState = CONVERTER_STATE_OPERATING;
+
     }
 }
 
 void state_operating_handler(void)
 {
+    // Verde ligado
     g_operationCounter++;
+    GPIO_writePin(LEDB_GPIO_PIN, 1); 
+    GPIO_writePin(LEDG_GPIO_PIN, 0);
 
     if (check_overcurrent_fault())
     {
@@ -133,11 +159,15 @@ void state_operating_handler(void)
         g_faultFlags |= FAULT_OVERVOLTAGE;
         g_converterState = CONVERTER_STATE_FAULT_OVERVOLTAGE;
     }
-    // Outras verificações de falta podem ser adicionadas aqui se desejado
+
 }
 
 void state_fault_overcurrent_handler(void)
 {
+    // Ambos ligados
+    GPIO_writePin(LEDB_GPIO_PIN, 0); 
+    GPIO_writePin(LEDG_GPIO_PIN, 0);
+    
     if (check_recovery_complete())
     {
         g_faultFlags &= ~FAULT_OVERCURRENT;
@@ -147,15 +177,21 @@ void state_fault_overcurrent_handler(void)
 
 void state_fault_overvoltage_handler(void)
 {
+    GPIO_writePin(LEDB_GPIO_PIN, 0); 
+    GPIO_writePin(LEDG_GPIO_PIN, 0);
+    
     if (check_recovery_complete())
     {
         g_faultFlags &= ~FAULT_OVERVOLTAGE;
         g_converterState = CONVERTER_STATE_RECOVERING;
+
     }
 }
 
 void state_fault_temp_handler(void)
 {
+    GPIO_writePin(LEDB_GPIO_PIN, 0); 
+    GPIO_writePin(LEDG_GPIO_PIN, 0);
     if (check_recovery_complete())
     {
         g_faultFlags &= ~FAULT_TEMPERATURE;
@@ -165,6 +201,9 @@ void state_fault_temp_handler(void)
 
 void state_fault_comm_handler(void)
 {
+    GPIO_writePin(LEDB_GPIO_PIN, 0); 
+    GPIO_writePin(LEDG_GPIO_PIN, 0);
+    
     if (check_recovery_complete())
     {
         g_faultFlags &= ~FAULT_COMM_ERROR;
@@ -174,9 +213,14 @@ void state_fault_comm_handler(void)
 
 void state_recovering_handler(void)
 {
+    // Azul piscando
+    GPIO_writePin(LEDG_GPIO_PIN, 1);
+    GPIO_togglePin(LEDB_GPIO_PIN);
+    
     if (check_recovery_complete())
     {
         g_converterState = CONVERTER_STATE_STANDBY;
+        GPIO_writePin(LEDB_GPIO_PIN, 1);
     }
 }
 

@@ -16,6 +16,9 @@
 #define TIME_RECOVERY       10U       // Tempo de recuperação (em ciclos de FSM)
 #define TIME_DELAY_US       1000000U  // Atraso de cada ciclo da FSM em microssegundos (1 segundo)
 
+#define LEDB_GPIO_PIN        31U     // GPIO do LED2 (Azul) na LaunchPadXL
+#define LEDG_GPIO_PIN        34U     // Verde
+
 
 // --- Enumeração Pública para Estados do Conversor ---
 typedef enum
@@ -36,6 +39,7 @@ extern volatile unsigned int g_faultFlags;
 extern volatile unsigned long g_operationCounter;
 
 // --- Protótipos das Funções Públicas do Módulo FSM ---
+void initLEDSGPIOS(void);
 void FSM_Init(void);     // Inicializa a máquina de estados
 void FSM_RunCycle(void); // Executa um ciclo da máquina de estados
 
