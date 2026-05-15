@@ -15,7 +15,7 @@ unsigned long g_timeOn_us = 0;
 unsigned long g_timeOff_us = 0;
 
 // --- Variáveis de Estado Globais do Módulo (Definição) ---
-volatile ConverterState_t g_converterState = IDLE;
+volatile ConverterState_t g_converterState = IDLE_STATE;
 volatile bool g_enableModulation = false;
 
 
@@ -47,7 +47,7 @@ void initLEDSGPIOS(void)
 
 void FSM_Init(void)
 {
-    g_converterState = IDLE;
+    g_converterState = IDLE_STATE;
 }
 
 void FSM_RunCycle(AdcChannel_t *adc_channel)
@@ -64,20 +64,20 @@ void FSM_RunCycle(AdcChannel_t *adc_channel)
             state_negative_handler(adc_channel);
             break;
 
-        case IDLE:
+        case IDLE_STATE:
             state_idle_handler();
             break;
 
         default:
             // Estado inválido: força em idle
-            g_converterState = IDLE;
+            g_converterState = IDLE_STATE;
             break;
     }
 }
 
 void decide_state(bool enable, double valor){
     if (!enable){
-        g_converterState = IDLE; 
+        g_converterState = IDLE_STATE; 
     } 
     else if (valor > 2048.0) {
         g_converterState = POSITIVE;

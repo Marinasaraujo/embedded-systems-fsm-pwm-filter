@@ -45,7 +45,7 @@ typedef enum
 {
     POSITIVE,
     NEGATIVE,
-    IDLE,
+    IDLE_STATE
 } ConverterState_t;
 
 // --- Variáveis de Estado Globais do Módulo (acessíveis externamente) ---
