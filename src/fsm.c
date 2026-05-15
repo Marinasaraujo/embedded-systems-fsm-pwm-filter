@@ -4,40 +4,31 @@
 #include "device.h"
 #include <stdbool.h>
 
-// --- Variáveis de Estado Globais do Módulo (Definição) ---
-volatile ConverterState_t g_converterState = CONVERTER_STATE_INIT;
-volatile unsigned int g_faultFlags = 0U;
-volatile unsigned long g_operationCounter = 0UL;
 
-// --- Variáveis Internas (simulação de eventos) ---
-static unsigned int startup_counter = 0U;
-static bool enable_cmd = false;
-static bool oc_fault_sim = false;
-static bool ov_fault_sim = false;
-static bool ot_fault_sim = false;
-static bool comm_err_sim = false;
-static unsigned int recovery_counter = 0U;
+#define PWM_PERIOD_US 10000U 
+#define PWM_COMPARE_MASK 0xFFFF
+#define PWM_ENABLE_BIT   (1U << 15)
+
+float g_dutyCyclePercent = 0.0F;
+unsigned int g_pwmControlReg = PWM_ENABLE_BIT; 
+unsigned long g_timeOn_us = 0;
+unsigned long g_timeOff_us = 0;
+
+// --- Variáveis de Estado Globais do Módulo (Definição) ---
+volatile ConverterState_t g_converterState = IDLE;
+volatile bool g_enableModulation = false;
 
 
 // Protótipos das Funções Handler de Estado (Internas)
-static void state_init_handler(void);
-static void state_standby_handler(void);
-static void state_operating_handler(void);
-static void state_fault_overcurrent_handler(void);
-static void state_fault_overvoltage_handler(void);
-static void state_fault_temp_handler(void);
-static void state_fault_comm_handler(void);
-static void state_recovering_handler(void);
-
-// Funções de Evento Simuladas (Internas)
-static bool check_startup_complete(void);
-static bool check_enable_command(void);
-static bool check_overcurrent_fault(void);
-static bool check_overvoltage_fault(void);
-static bool check_overtemp_fault(void);
-static bool check_comm_error(void);
-static bool check_recovery_complete(void);
-
+static void state_positive_handler(AdcChannel_t *adc_channel);
+static void state_negative_handler(AdcChannel_t *adc_channel);
+static void state_idle_handler(void);
+void decide_state(bool enable, double valor);
+float calculate_duty_cicle(double valor, ConverterState_t estado);
+void setPWMDutyCycleAndRegister(float dutyCycle);
+unsigned int calculateCompareValueFromDutyCycle(float dutyCycle);
+void calculatePWMOnOffTimes(unsigned int compareVal);
+void generateSoftwarePWM(int led_pin);
 
 // --- Implementações das Funções Públicas do Módulo FSM ---
 
@@ -56,236 +47,139 @@ void initLEDSGPIOS(void)
 
 void FSM_Init(void)
 {
-    g_converterState = CONVERTER_STATE_INIT;
-    g_faultFlags = 0U;
-    g_operationCounter = 0UL;
-
-    // Resetar contadores das funções de evento simuladas
-    startup_counter = 0U;
-    enable_cmd = false;
-    oc_fault_sim = false;
-    ov_fault_sim = false;
-    ot_fault_sim = false;
-    comm_err_sim = false;
-    recovery_counter = 0U;
+    g_converterState = IDLE;
 }
 
-void FSM_RunCycle(void)
+void FSM_RunCycle(AdcChannel_t *adc_channel)
 {
-    // Despacho baseado no estado atual usando switch-case
+    decide_state(g_enableModulation, adc_channel->filteredValueADC);
+    
     switch (g_converterState)
     {
-        case CONVERTER_STATE_INIT:
-            state_init_handler();
+        case POSITIVE:
+            state_positive_handler(adc_channel);
             break;
 
-        case CONVERTER_STATE_STANDBY:
-            state_standby_handler();
+        case NEGATIVE:
+            state_negative_handler(adc_channel);
             break;
 
-        case CONVERTER_STATE_OPERATING:
-            state_operating_handler();
-            break;
-
-        case CONVERTER_STATE_FAULT_OVERCURRENT:
-            state_fault_overcurrent_handler();
-            break;
-
-        case CONVERTER_STATE_FAULT_OVERVOLTAGE:
-            state_fault_overvoltage_handler();
-            break;
-
-        case CONVERTER_STATE_FAULT_TEMP:
-            state_fault_temp_handler();
-            break;
-
-        case CONVERTER_STATE_FAULT_COMM:
-            state_fault_comm_handler();
-            break;
-
-        case CONVERTER_STATE_RECOVERING:
-            state_recovering_handler();
+        case IDLE:
+            state_idle_handler();
             break;
 
         default:
-            // Estado inválido: força entrada em estado de falta
-            g_converterState = CONVERTER_STATE_FAULT_OVERCURRENT;
+            // Estado inválido: força em idle
+            g_converterState = IDLE;
             break;
     }
 }
 
-
-// --- Implementações das Funções Handler de Estado (Internas) ---
-
-void state_init_handler(void)
-{
-    // Ambos apagados
-    GPIO_writePin(LEDB_GPIO_PIN, 1);
-    GPIO_writePin(LEDG_GPIO_PIN, 1);
-    
-    if (check_startup_complete())
-    {
-        g_converterState = CONVERTER_STATE_STANDBY;
+void decide_state(bool enable, double valor){
+    if (!enable){
+        g_converterState = IDLE; 
+    } 
+    else if (valor > 2048.0) {
+        g_converterState = POSITIVE;
+    }
+    else {
+        g_converterState = NEGATIVE;
     }
 }
 
-void state_standby_handler(void)
-{
-    // Ambos apagados
-    GPIO_writePin(LEDB_GPIO_PIN, 1);
-    GPIO_writePin(LEDG_GPIO_PIN, 1);
-    
-    if (check_enable_command())
-    {
-        g_converterState = CONVERTER_STATE_OPERATING;
 
+float calculate_duty_cicle(double valor, ConverterState_t estado) {
+    float duty_cicle = 0.0;
+    
+    if (estado == POSITIVE) {
+        // Vai de 0% (em 2048) a 100% (em 4095)
+        duty_cicle = ((valor - 2048.0) / 2047.0) * 100.0;
+    } 
+    else if (estado == NEGATIVE) {
+        // Vai de 0% (em 2048) a 100% (em 0)
+        duty_cicle = ((2048.0 - valor) / 2048.0) * 100.0;
     }
+    
+    if (duty_cicle > 100.0) duty_cicle = 100.0;
+    if (duty_cicle < 0.0) duty_cicle = 0.0;
+    
+    return duty_cicle;
 }
 
-void state_operating_handler(void)
+
+void state_positive_handler(AdcChannel_t *adc_channel)
 {
-    // Verde ligado
-    g_operationCounter++;
+    // Apaga azul e modula o verde
+    float duty = calculate_duty_cicle(adc_channel->filteredValueADC, POSITIVE);
+    setPWMDutyCycleAndRegister(duty);
     GPIO_writePin(LEDB_GPIO_PIN, 1); 
-    GPIO_writePin(LEDG_GPIO_PIN, 0);
-
-    if (check_overcurrent_fault())
-    {
-        g_faultFlags |= FAULT_OVERCURRENT;
-        g_converterState = CONVERTER_STATE_FAULT_OVERCURRENT;
-    }
-    else if (check_overvoltage_fault())
-    {
-        g_faultFlags |= FAULT_OVERVOLTAGE;
-        g_converterState = CONVERTER_STATE_FAULT_OVERVOLTAGE;
-    }
+    generateSoftwarePWM(LEDG_GPIO_PIN);
 
 }
 
-void state_fault_overcurrent_handler(void)
+void state_negative_handler(AdcChannel_t *adc_channel)
 {
-    // Ambos ligados
-    GPIO_writePin(LEDB_GPIO_PIN, 0); 
-    GPIO_writePin(LEDG_GPIO_PIN, 0);
+    // Apaga o verde e modula o azul
+    float duty = calculate_duty_cicle(adc_channel->filteredValueADC, NEGATIVE);
+    setPWMDutyCycleAndRegister(duty);
+    GPIO_writePin(LEDG_GPIO_PIN,1);
+    generateSoftwarePWM(LEDB_GPIO_PIN);
     
-    if (check_recovery_complete())
-    {
-        g_faultFlags &= ~FAULT_OVERCURRENT;
-        g_converterState = CONVERTER_STATE_RECOVERING;
-    }
 }
 
-void state_fault_overvoltage_handler(void)
+void state_idle_handler(void)
 {
-    GPIO_writePin(LEDB_GPIO_PIN, 0); 
-    GPIO_writePin(LEDG_GPIO_PIN, 0);
-    
-    if (check_recovery_complete())
-    {
-        g_faultFlags &= ~FAULT_OVERVOLTAGE;
-        g_converterState = CONVERTER_STATE_RECOVERING;
 
-    }
-}
-
-void state_fault_temp_handler(void)
-{
-    GPIO_writePin(LEDB_GPIO_PIN, 0); 
-    GPIO_writePin(LEDG_GPIO_PIN, 0);
-    if (check_recovery_complete())
-    {
-        g_faultFlags &= ~FAULT_TEMPERATURE;
-        g_converterState = CONVERTER_STATE_RECOVERING;
-    }
-}
-
-void state_fault_comm_handler(void)
-{
-    GPIO_writePin(LEDB_GPIO_PIN, 0); 
-    GPIO_writePin(LEDG_GPIO_PIN, 0);
-    
-    if (check_recovery_complete())
-    {
-        g_faultFlags &= ~FAULT_COMM_ERROR;
-        g_converterState = CONVERTER_STATE_RECOVERING;
-    }
-}
-
-void state_recovering_handler(void)
-{
-    // Azul piscando
+    GPIO_writePin(LEDB_GPIO_PIN, 1); 
     GPIO_writePin(LEDG_GPIO_PIN, 1);
-    GPIO_togglePin(LEDB_GPIO_PIN);
-    
-    if (check_recovery_complete())
+
+}
+
+// Converte ciclo de trabalho (%) para valor de comparação (0 a PWM_PERIOD_US).
+unsigned int calculateCompareValueFromDutyCycle(float dutyCycle)
+{
+    if (dutyCycle < 0.0F) dutyCycle = 0.0F;
+    else if (dutyCycle > 100.0F) dutyCycle = 100.0F;
+    return (unsigned int)((dutyCycle / 100.0F) * PWM_PERIOD_US);
+}
+
+void calculatePWMOnOffTimes(unsigned int compareVal) {
+    g_timeOn_us = (compareVal * PWM_PERIOD_US) / PWM_COMPARE_MASK;
+    g_timeOff_us = PWM_PERIOD_US - g_timeOn_us;
+}
+
+// Configura ciclo de trabalho e atualiza registrador simulado e tempos ON/OFF.
+void setPWMDutyCycleAndRegister(float dutyCycle)
+{
+    g_dutyCyclePercent = dutyCycle;
+
+    unsigned int compareVal = calculateCompareValueFromDutyCycle(dutyCycle);
+
+    // Preserva o bit de enable, limpa os bits de comparação e escreve o novo valor
+    unsigned int currentConfigBits = g_pwmControlReg & ~PWM_COMPARE_MASK;
+    g_pwmControlReg = currentConfigBits | (compareVal & PWM_COMPARE_MASK);
+
+    calculatePWMOnOffTimes(compareVal);
+}
+
+// Gera um ciclo da onda PWM por software no pino do LED.
+// Apenas lógica normal (ativo baixo: 0 = LED ON, 1 = LED OFF).
+void generateSoftwarePWM(int led_pin)
+{
+    if ((g_pwmControlReg & PWM_ENABLE_BIT) != 0U) // Se PWM habilitado
     {
-        g_converterState = CONVERTER_STATE_STANDBY;
-        GPIO_writePin(LEDB_GPIO_PIN, 1);
+        // Período ON: pino LOW -> LED aceso
+        GPIO_writePin(led_pin, 0);
+        DEVICE_DELAY_US(g_timeOn_us);
+
+        // Período OFF: pino HIGH -> LED apagado
+        GPIO_writePin(led_pin, 1);
+        DEVICE_DELAY_US(g_timeOff_us);
+    }
+    else // PWM desabilitado
+    {
+        GPIO_writePin(led_pin, 1); // LED OFF
+        DEVICE_DELAY_US(PWM_PERIOD_US); // Aguarda período completo
     }
 }
 
-
-// --- Implementações das Funções de Evento Simuladas (Internas) ---
-
-static bool check_startup_complete(void) {
-    // Verifica se o estado é INIT e se o contador de inicialização excedeu o limite
-    if (g_converterState == CONVERTER_STATE_INIT) {
-        if (++startup_counter > TIME_STARTUP) {
-            startup_counter = 0U;
-            return true;
-        }
-    }
-    return false;
-}
-
-static bool check_enable_command(void) {
-    // Simula comando de habilitação externo (ativado via depurador)
-    if (g_converterState == CONVERTER_STATE_STANDBY && enable_cmd) {
-        enable_cmd = false;
-        return true;
-    }
-    return false;
-}
-
-static bool check_overcurrent_fault(void) {
-    if (g_converterState == CONVERTER_STATE_OPERATING && oc_fault_sim) {
-        oc_fault_sim = false;
-        return true;
-    }
-    return false;
-}
-
-static bool check_overvoltage_fault(void) {
-    if (g_converterState == CONVERTER_STATE_OPERATING && ov_fault_sim) {
-        ov_fault_sim = false;
-        return true;
-    }
-    return false;
-}
-
-static bool check_overtemp_fault(void) {
-    if (g_converterState == CONVERTER_STATE_OPERATING && ot_fault_sim) {
-        ot_fault_sim = false;
-        return true;
-    }
-    return false;
-}
-
-static bool check_comm_error(void) {
-    if (g_converterState == CONVERTER_STATE_OPERATING && comm_err_sim) {
-        comm_err_sim = false;
-        return true;
-    }
-    return false;
-}
-
-static bool check_recovery_complete(void) {
-    // Verifica se está em algum estado de falta ou recuperação e se o contador excedeu o limite
-    if (g_converterState >= CONVERTER_STATE_FAULT_OVERCURRENT) {
-        if (++recovery_counter > TIME_RECOVERY) {
-            recovery_counter = 0U;
-            return true;
-        }
-    }
-    return false;
-}
