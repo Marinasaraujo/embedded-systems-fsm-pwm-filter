@@ -5,11 +5,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// --- Definições Públicas para Flags de Falha (empacotadas em bits) ---
-#define FAULT_OVERCURRENT   (1U << 0) // Bit 0: Sobrecorrente detectada
-#define FAULT_OVERVOLTAGE   (1U << 1) // Bit 1: Sobretensão detectada
-#define FAULT_TEMPERATURE   (1U << 2) // Bit 2: Sobretemperatura detectada
-#define FAULT_COMM_ERROR    (1U << 3) // Bit 3: Erro de comunicação
 
 // --- Definições Públicas para Tempos ---
 #define TIME_STARTUP        5U        // Tempo de inicialização (em ciclos de FSM)

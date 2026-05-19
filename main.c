@@ -17,6 +17,7 @@
 //#############################################################################
 
 // Arquivos Incluídos
+#include <stdio.h>
 #include "driverlib.h"
 #include "device.h"
 #include "fsm.h"
@@ -69,7 +70,7 @@ void main(void)
 
 
         // Atraso para controlar a taxa de execução (definido em fsm.h)
-        DEVICE_DELAY_US(TIME_DELAY_US);
+        //DEVICE_DELAY_US(TIME_DELAY_US);
     }
 }
 
@@ -121,8 +122,6 @@ void processAdcChannel(AdcChannel_t *pChannel)
 
 
 // Simula uma leitura do ADC gerando um valor que varia lentamente.
-// Utiliza um contador simples para produzir uma rampa triangular
-// (sobe de 0 até ADC_MAX_VALUE e depois desce).
 unsigned int readSimulatedADC(void)
 {
     // Variáveis estáticas não perdem o valor entre as chamadas!

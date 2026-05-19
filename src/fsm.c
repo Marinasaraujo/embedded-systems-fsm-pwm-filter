@@ -6,7 +6,8 @@
 
 
 #define PWM_PERIOD_US 10000U 
-#define PWM_COMPARE_MASK 0xFFFF
+//#define PWM_COMPARE_MASK 0xFFFF
+#define PWM_COMPARE_MASK 0x7FFF
 #define PWM_ENABLE_BIT   (1U << 15)
 
 float g_dutyCyclePercent = 0.0F;
@@ -18,13 +19,12 @@ unsigned long g_timeOff_us = 0;
 volatile ConverterState_t g_converterState = IDLE_STATE;
 volatile bool g_enableModulation = false;
 
-
 // Protótipos das Funções Handler de Estado (Internas)
 static void state_positive_handler(AdcChannel_t *adc_channel);
 static void state_negative_handler(AdcChannel_t *adc_channel);
 static void state_idle_handler(void);
-void decide_state(bool enable, double valor);
-float calculate_duty_cicle(double valor, ConverterState_t estado);
+void decide_state(bool enable, float valor);
+float calculate_duty_cicle(float valor, ConverterState_t estado);
 void setPWMDutyCycleAndRegister(float dutyCycle);
 unsigned int calculateCompareValueFromDutyCycle(float dutyCycle);
 void calculatePWMOnOffTimes(unsigned int compareVal);
@@ -52,6 +52,7 @@ void FSM_Init(void)
 
 void FSM_RunCycle(AdcChannel_t *adc_channel)
 {
+
     decide_state(g_enableModulation, adc_channel->filteredValueADC);
     
     switch (g_converterState)
@@ -75,33 +76,34 @@ void FSM_RunCycle(AdcChannel_t *adc_channel)
     }
 }
 
-void decide_state(bool enable, double valor){
+void decide_state(bool enable, float valor){
     if (!enable){
         g_converterState = IDLE_STATE; 
     } 
-    else if (valor > 2048.0) {
+    else if (valor > 2048.0F) {
         g_converterState = POSITIVE;
     }
     else {
         g_converterState = NEGATIVE;
     }
+
 }
 
 
-float calculate_duty_cicle(double valor, ConverterState_t estado) {
-    float duty_cicle = 0.0;
+float calculate_duty_cicle(float valor, ConverterState_t estado) {
+    float duty_cicle = 0.0F;
     
     if (estado == POSITIVE) {
         // Vai de 0% (em 2048) a 100% (em 4095)
-        duty_cicle = ((valor - 2048.0) / 2047.0) * 100.0;
+        duty_cicle = ((valor - 2048.0F) / 2047.0F) * 100.0F;
     } 
     else if (estado == NEGATIVE) {
         // Vai de 0% (em 2048) a 100% (em 0)
-        duty_cicle = ((2048.0 - valor) / 2048.0) * 100.0;
+        duty_cicle = ((2048.0F - valor) / 2048.0F) * 100.0F;
     }
     
-    if (duty_cicle > 100.0) duty_cicle = 100.0;
-    if (duty_cicle < 0.0) duty_cicle = 0.0;
+    if (duty_cicle > 100.0F) duty_cicle = 100.0F;
+    if (duty_cicle < 0.0F) duty_cicle = 0.0F;
     
     return duty_cicle;
 }
@@ -132,6 +134,7 @@ void state_idle_handler(void)
 
     GPIO_writePin(LEDB_GPIO_PIN, 1); 
     GPIO_writePin(LEDG_GPIO_PIN, 1);
+    DEVICE_DELAY_US(PWM_PERIOD_US);
 
 }
 
@@ -143,8 +146,9 @@ unsigned int calculateCompareValueFromDutyCycle(float dutyCycle)
     return (unsigned int)((dutyCycle / 100.0F) * PWM_PERIOD_US);
 }
 
+
 void calculatePWMOnOffTimes(unsigned int compareVal) {
-    g_timeOn_us = (compareVal * PWM_PERIOD_US) / PWM_COMPARE_MASK;
+    g_timeOn_us = compareVal; 
     g_timeOff_us = PWM_PERIOD_US - g_timeOn_us;
 }
 
